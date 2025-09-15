@@ -2,7 +2,6 @@
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue?style=for-the-badge&logo=python)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c?style=for-the-badge&logo=pytorch)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
 Este projeto é uma **inteligência artificial para classificação de imagens**, construída com uma rede neural em PyTorch. O sistema é flexível e pode ser treinado para classificar qualquer tipo de imagem, sendo capaz de aprender, validar e classificar novos dados. A implementação inclui um mecanismo de *early stopping* para otimizar o processo de treinamento e evitar overfitting.
 
