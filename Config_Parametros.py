@@ -1,14 +1,19 @@
 """
-    Arquivo para configuração da RN
+    Arquivo para configuração da RN, baseado no script exemplo_pytorch_v4.
 """
 
-epocas = 100  # Quantidade de vezes que a imagem irá passar pelo conjunto de treinamento
-tamanho_lote = 33  # Tamanho de cada lote (batches) que é um pequeno grupo de imagens
-taxa_aprendizagem = 0.001   # Magnitude nos pesos
+# Hiperparâmetros de treinamento
+epocas = 100              # Total de passagens pelo conjunto de imagens
+tamanho_lote = 16         # Tamanho de cada lote (batch)
+taxa_aprendizagem = 0.02   # Magnitude das alterações nos pesos (ajustado para Adam)
+momento = 0.9               # Parâmetro para o otimizador SGD (se for usado)
 
-nome_rede = "resnet" # Define uma arquitetura 
-tamanho_imagens = 64 
-perc_val = 0.21  # Percentual do treinamento a ser usado para validação
+# Hiperparâmetros de Parada Antecipada (Early Stopping)
+paciencia = 5             # Total de épocas sem melhoria até parar
+tolerancia = 0.9         # Melhoria menor que este valor não é considerada
 
-paciencia = 5  # Total de épocas sem melhoria da acurácia na validação até parar
-tolerancia = 0.01 # Melhoria menor que este valor não é considerada melhoria
+# Configuração da Arquitetura
+# Opções: "resnet", "squeezenet", "densenet"
+nome_rede = "resnet"
+tamanho_imagens = 64     # Tamanho de imagem ideal para essas arquiteturas
+perc_val = 0.21             # Percentual do treino a ser usado para validação
