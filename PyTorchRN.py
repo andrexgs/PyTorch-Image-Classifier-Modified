@@ -1,196 +1,217 @@
-# -*- coding: utf-8 -*-
-import torch
-from torch import nn
-from torch.utils.data import DataLoader
-from torchvision import datasets, models, transforms
+"""
+    IMPORTANDO AS BIBLIOTECAS PARA REDE NEURAL DE CLASSIFICAÇÃO
+"""
+import torch   # Biblioteca pytorch principal
+from torch import nn  # Módulo para redes neurais (neural networks)
+from torch.utils.data import DataLoader # Manipulação de bancos de imagens
+from torchvision import datasets, models # Ajuda a importar alguns bancos já prontos e famosos
+from torchvision.transforms import ToTensor # Realiza transformações nas imagens
+import matplotlib.pyplot as plt # Mostra imagens e gráficos
+import torchvision.transforms as transforms
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix, classification_report
-import seaborn as sn
-import pandas as pd
-import matplotlib.pyplot as plt
 from torch.utils.data import Subset
+from torch.utils.tensorboard import SummaryWriter # Salva "log" da aprendizagem
 import math
-import numpy as np
-from PIL import Image
-
-# Importa as configurações
-import Config_Parametros as cfg
+import Config_Parametros
 import Carregar_Banco
 
-# --- CONFIGURAÇÕES GLOBAIS ---
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Define as transformações nas imagens, incluindo Data Augmentation para o treino
-data_transforms = {
-    'train': transforms.Compose([
-        transforms.RandomResizedCrop(cfg.tamanho_imagens),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ]),
-    'val': transforms.Compose([
-        transforms.Resize(int(cfg.tamanho_imagens * 1.14)), # 256 para 224
-        transforms.CenterCrop(cfg.tamanho_imagens),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ]),
-}
+"""
+    TRANSFORMANDO IMAGENS EM TENSORES E NORMALIZANDO
+"""
+transform = transforms.Compose([
+    transforms.Resize((Config_Parametros.tamanho_imagens,Config_Parametros.tamanho_imagens)),
+    transforms.ToTensor(),])
 
-# --- CARREGAMENTO DE DADOS ---
-def carregar_dados():
-    full_train_dataset = datasets.ImageFolder(root=Carregar_Banco.pasta_treino, transform=data_transforms['train'])
-    full_val_dataset = datasets.ImageFolder(root=Carregar_Banco.pasta_treino, transform=data_transforms['val'])
-    test_data = datasets.ImageFolder(root=Carregar_Banco.pasta_validacao, transform=data_transforms['val'])
 
-    train_idx, val_idx = train_test_split(list(range(len(full_train_dataset))), test_size=cfg.perc_val)
-    training_data = Subset(full_train_dataset, train_idx)
-    val_data = Subset(full_val_dataset, val_idx)
+"""
+    CARREGANDO O BANCO DE IMAGENS 
+"""
+training_val_data = datasets.ImageFolder(root=Carregar_Banco.pasta_treino,transform=transform) 
+test_data = datasets.ImageFolder(root=Carregar_Banco.pasta_validacao,transform=transform)
+train_idx, val_idx = train_test_split(list(range(len(training_val_data))), test_size=Config_Parametros.perc_val) # Gera uma lista com os índices de imagens
+training_data = Subset(training_val_data, train_idx) # Cria um dataset somente com índice de treino
+val_data = Subset(training_val_data, val_idx) # Cria um dataset somente com índice de validação
 
-    train_dl = DataLoader(training_data, batch_size=cfg.tamanho_lote, shuffle=True)
-    val_dl = DataLoader(val_data, batch_size=cfg.tamanho_lote, shuffle=True)
+
+"""
+    CRIANDO OS LOTES (BATCHES)
+"""
+train_dataloader = DataLoader(training_data, batch_size=Config_Parametros.tamanho_lote,shuffle=True)
+val_dataloader = DataLoader(val_data, batch_size=Config_Parametros.tamanho_lote,shuffle=True)
+
+
+"""
+    INFORMAÇÕES GERAIS
     
-    labels_map = {v: k for k, v in test_data.class_to_idx.items()}
-    return train_dl, val_dl, test_data, labels_map
+        shape[0] -> Quantidade de imagens em cada lote      shape[1] -> Quantidade de canais (1 para Preto e Branco | 3 para RGB)
+        shape[2] -> Altura de cada imagem                   shape[3] -> Largura de Cada imagem
+        dtype -> Tipo da classe
+"""
+for X, y in val_dataloader: # X-> Tensor de imagens do lote  y-> Tensor com as classes
+    print(f"\nTamanho do lote de imagens: {X.shape[0]}")
+    print(f"Quantidade de canais: {X.shape[1]}")
+    print(f"Altura de cada imagem: {X.shape[2]}")
+    print(f"Largura de cada imagem: {X.shape[3]}")
+    print(f"Tamanho do lote de classes (labels): {y.shape[0]}")
+    print(f"Tipo de cada classe: {y.dtype}")
+    break  # Para após mostrar os dados do 1º lote
 
-# --- MODELO ---
-def carregar_modelo(num_classes):
-    model = None
-    if cfg.nome_rede == "resnet":
-        model = models.resnet18(weights='IMAGENET1K_V1')
-        for param in model.parameters():
-            param.requires_grad = False
-        model.fc = nn.Linear(model.fc.in_features, num_classes)
-    elif cfg.nome_rede == "squeezenet":
-        model = models.squeezenet1_0(weights='SQUEEZENET1_0_IMAGENET1K_V1')
-        model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1,1), stride=(1,1))
-        model.num_classes = num_classes
-    elif cfg.nome_rede == "densenet":
-        model = models.densenet161(weights='DENSENET161_IMAGENET1K_V1')
-        model.classifier = nn.Linear(model.classifier.in_features, num_classes)
+print(f"\nTotal de imagens de treinamento: {len(training_data)}")
+print(f"Total de imagens de validação: {len(val_data)}")
+labels_map = {v: k for k, v in test_data.class_to_idx.items()} # Dicionário que relaciona um nome das classes (labels) em um número
+print(f'\nClasses:',labels_map)
 
-    return model.to(device)
 
-# --- FUNÇÕES DE TREINO E VALIDAÇÃO ---
-def train_epoch(dataloader, model, loss_fn, optimizer):
+"""
+    VERIFICA SE A MÁQUINA ESTÁ USANDO A GPU OU CPU
+"""
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"\n\nUsando {device}")
+
+total_classes = len(labels_map) # Calcula o tamanho de classes (labels) possui 
+tamanho_entrada_flatten = Config_Parametros.tamanho_imagens * Config_Parametros.tamanho_imagens * 3 # Tamanho vetorial de cada imagem
+
+
+"""
+    DEFININDO A CLASSE DA RN
+"""
+class NeuralNetwork(nn.Module):
+    def __init__(self):
+
+
+        super(NeuralNetwork, self).__init__() # Inicializa a classe principal
+        self.flatten = nn.Flatten() # Transforma o redimencionamento das imagens em um vetor
+
+        # Neurônios
+        self.linear_relu_stack = nn.Sequential(
+            nn.Linear(tamanho_entrada_flatten, 512), # Transforma o vetor da imagem em um vetor de 512 neurônios
+            nn.ReLU(),  
+            nn.Linear(512, 512), 
+            nn.ReLU(),
+            nn.Linear(512, total_classes)) # Transforma o vetor de 512 neurônios em um vetor com a quantidade de classes (labels)
+
+    # Define os dados passam pela rede
+    def forward(self, x):
+        x = self.flatten(x) # Faz o achatamento das imagens
+        output_values = self.linear_relu_stack(x) # Ativação dos neurônios
+        return output_values
+
+model = NeuralNetwork().to(device) # Cria a rede e joga na GPU ou CPU
+print(model) # Impreme os dados da arquitetura de rede
+
+
+# Pega todos os parâmetros da rede e controla o tamanho dos passos "Aprendizagem"
+otimizador = torch.optim.Adam(model.parameters(), lr=Config_Parametros.taxa_aprendizagem) 
+# Mede o erro entre as previsões da rede e as classes reais
+funcao_perda = nn.CrossEntropyLoss() 
+
+"""
+    DEFININDO A FUNÇÃO DE TREINAMENTO DA RN
+"""
+
+def train(dataloader, model, loss_fn, optimizer):
     size = len(dataloader.dataset)
     model.train()
-    train_loss, train_correct = 0, 0
-    num_batches = len(dataloader)
 
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
-        pred = model(X)
-        loss = loss_fn(pred, y)
-        
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    for batch, (X, y) in enumerate(dataloader, start=1):
 
-        train_loss += loss.item()
-        train_correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+        X, y = X.to(device), y.to(device)  # Prepara os dados para o dispositivo (GPU ou CPU)
+        pred = model(X)         # Realiza uma previsão usando os pesos atuais
+        loss = loss_fn(pred, y) # Calcula o erro com os pesos atuais
 
-    return train_loss / num_batches, train_correct / size
+        optimizer.zero_grad()  # Zera os gradientes 
+        loss.backward()        # Retropropaga o gradiente do erro
+        optimizer.step()       # Recalcula todos os pesos da rede
 
-def validation_epoch(dataloader, model, loss_fn):
-    size = len(dataloader.dataset)
-    model.eval()
-    val_loss, val_correct = 0, 0
-    num_batches = len(dataloader)
+        loss, current = loss.item(), min(batch * dataloader.batch_size, len(dataloader.dataset))
+        print(f"Perda: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
+
+"""
+    DEFININDO A FUNÇÃO DE VALIDAÇÃO DA RN
+"""
+def validation(dataloader, model, loss_fn):
+    size = len(dataloader.dataset)  # Total de imagens para validação
+    num_batches = len(dataloader)   # Total de lotes (batches)
+    model.eval()  # Coloca a rede em modo de avaliação (e não de aprendizagem)
+    val_loss, correct = 0, 0
     with torch.no_grad():
         for X, y in dataloader:
-            X, y = X.to(device), y.to(device)
-            pred = model(X)
-            val_loss += loss_fn(pred, y).item()
-            val_correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+            X, y = X.to(device), y.to(device) # Prepara os dados para o dispositivo (GPU ou CPU)
+            pred = model(X) # Realiza uma previsão usando os pesos atuais
+            val_loss += loss_fn(pred, y).item() # Soma da perda do lote (batch) atual
+            correct += (pred.argmax(1) == y).type(torch.float).sum().item() # Soma de quantos acertos
 
-    return val_loss / num_batches, val_correct / size
-
-# --- FUNÇÃO PRINCIPAL DE ORQUESTRAÇÃO ---
-async def iniciar_treinamento(update, context):
-    train_dl, val_dl, _, labels_map = carregar_dados()
-    total_classes = len(labels_map)
-    model = carregar_modelo(total_classes)
-
-    funcao_perda = nn.CrossEntropyLoss()
-    params_to_update = filter(lambda p: p.requires_grad, model.parameters())
-    otimizador = torch.optim.Adam(params_to_update, lr=cfg.taxa_aprendizagem)
-
-    maior_acuracia = 0
-    total_sem_melhora = 0
+    val_loss /= num_batches # Média de perda nos lotes
+    acuracia = correct / size # Acertos no conjunto de validação  
     
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Iniciando treinamento com a arquitetura '{cfg.nome_rede}'...")
+    print("\n..::: INFORMAÇÕES DE VALIDAÇÃO :::..\n")
+    print(f"    Total de acertos: {int(correct)}")
+    print(f"    Total de imagens: {size}")
+    print(f"    Perda média: {val_loss:>8f}")            
+    print(f"    Acurácia: {(acuracia):>0.3f}")
+    print(f"    Acurácia percentual: {(100*acuracia):>0.1f}%")
+    return acuracia
 
-    for epoca in range(cfg.epocas):
-        train_loss, train_acuracia = train_epoch(train_dl, model, funcao_perda, otimizador)
-        val_loss, val_acuracia = validation_epoch(val_dl, model, funcao_perda)
+melhor_acuracia = -math.inf  # Começamos com um valor muito baixo (infinito negativo)
+total_sem_melhora = 0
 
-        msg = (f"Época {epoca+1}:\n"
-               f"  - Acurácia de Treino: {100*train_acuracia:.1f}%\n"
-               f"  - Acurácia de Validação: {100*val_acuracia:.1f}%")
-        
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
+# Loop que passa todas as imagens várias vezes pela quantidade de épocas
+for t in range(Config_Parametros.epocas):
+    print(f"-------------------------------")
+    print(f"Época {t+1}\n-------------------------------")
+    train(train_dataloader, model, funcao_perda, otimizador)
+    acuracia_val = validation(val_dataloader, model, funcao_perda)
 
-        if val_acuracia > (maior_acuracia + cfg.tolerancia):
-            torch.save(model.state_dict(), "modelo_treinado.pth")
-            maior_acuracia = val_acuracia
-            total_sem_melhora = 0
-        else:
-            total_sem_melhora += 1
+    # LÓGICA CORRIGIDA: Compara a acurácia atual com a melhor já registrada
+    if acuracia_val > melhor_acuracia:
+        print(f"\n>>> Acurácia melhorou ({melhor_acuracia:.3f} --> {acuracia_val:.3f}). Salvando modelo...")
+        melhor_acuracia = acuracia_val  # Atualiza a melhor acurácia
+        torch.save(model.state_dict(), "modelo_treinado.pth") # Salva o modelo
+        total_sem_melhora = 0 # Reseta o contador de paciência
+    else:
+        total_sem_melhora += 1
+        print(f"\n>>> Acurácia não melhorou. Paciência: {total_sem_melhora}/{Config_Parametros.paciencia}")
 
-        if total_sem_melhora >= cfg.paciencia:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Parada antecipada na época {epoca+1}!")
-            break
-            
-    return "Treinamento finalizado! Use /test para ver as métricas de desempenho."
+    # Condição de parada antecipada
+    if total_sem_melhora >= Config_Parametros.paciencia:
+        print(f"\nParada antecipada na época {t+1}! O modelo não melhora há {Config_Parametros.paciencia} épocas.")
+        break
 
-# --- FUNÇÕES DE AVALIAÇÃO E CLASSIFICAÇÃO ---
-def gerar_metricas_teste():
-    _, _, test_data, labels_map = carregar_dados()
-    model = carregar_modelo(len(labels_map))
-    try:
-        model.load_state_dict(torch.load("modelo_treinado.pth"))
-    except FileNotFoundError:
-        return "Modelo não encontrado. Treine primeiro com /train.", None
+print("Terminou a fase de aprendizagem !")
 
-    predicoes, reais = [], []
+"""
+    CARREGA A REDE NEURAL TREINADA ANTERIORMENTE
+"""
+model = NeuralNetwork().to(device) # Cria uma nova instância do modelo na GPU/CPU
+model.load_state_dict(torch.load("modelo_treinado.pth"))
+
+"""
+    CLASSIFICA UMA IMAGEM
+"""
+def classifica_uma_imagem(model, x, y):
     model.eval()
     with torch.no_grad():
-        for img, label in test_data:
-            img = img.unsqueeze(0).to(device)
-            pred = model(img)
-            predicoes.append(int(pred[0].argmax(0)))
-            reais.append(label)
+       # Adicione a linha abaixo para mover o tensor da imagem para a GPU/CPU
+       x = x.to(device)
+       
+       x = x.unsqueeze(0)
+       pred = model(x)
+       predita, real = labels_map[int(pred[0].argmax(0))], labels_map[y]
+       print(f'Predita: "{predita}", Real: "{real}"')
+    return predita
 
-    report_str = classification_report(reais, predicoes, target_names=labels_map.values())
-    
-    # Gerar e salvar matriz de confusão
-    matriz = confusion_matrix(reais, predicoes)
-    df_matriz = pd.DataFrame(matriz, index=labels_map.values(), columns=labels_map.values())
-    plt.figure(figsize=(10, 7))
-    sn.heatmap(df_matriz, annot=True, fmt='g', cmap='Blues')
-    plt.xlabel("Predito")
-    plt.ylabel("Real")
-    plt.title("Matriz de Confusão")
-    caminho_imagem = "matriz_confusao.png"
-    plt.savefig(caminho_imagem)
-    plt.close()
-
-    return f"```{report_str}```", caminho_imagem
-
-def classificar_imagem(image_path):
-    _, _, _, labels_map = carregar_dados()
-    model = carregar_modelo(len(labels_map))
-    try:
-        model.load_state_dict(torch.load("modelo_treinado.pth"))
-    except FileNotFoundError:
-        return "Modelo não encontrado. Treine primeiro com /train."
-
-    model.eval()
-    image = Image.open(image_path).convert("RGB")
-    img_tensor = data_transforms['val'](image).unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        pred = model(img_tensor)
-        predita = labels_map[int(pred[0].argmax(0))]
-    return f"A imagem foi classificada como: **{predita}**"
+figure = plt.figure(figsize=(10, 10))
+cols, rows = 3, 4
+print(f"-------------------------------")
+for i in range(1, cols * rows + 1):
+    sample_idx = torch.randint(len(training_data), size=(1,)).item() # Número randomico menor que a quantidade de imagens
+    img, label = training_data[sample_idx] # Pega a imagem e classificação usando o número randomico
+    predita = classifica_uma_imagem(model,img,label) # Classifica usando a rede treinada
+    figure.add_subplot(rows, cols, i) # Adiciona a imagem na grade que será mostrada
+    plt.title(predita) # Usa a classe da imagem como título da imagem
+    plt.axis("off") # Não mostra valores nos eixos X e Y
+    plt.imshow(img.permute(1,2,0)) # Ajusta a ordem das dimensões do tensor
+print(f"-------------------------------")
+plt.show() # Este é o comando que vai mostrar as imagens
